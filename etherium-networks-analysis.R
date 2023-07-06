@@ -105,54 +105,17 @@ e.nw.df <- nw13.gr.df$graph.df
 head(nw13.gr.df$vertices)
 lapply(vertex.attributes(e.nw.df), head)
 
-cores=detectCores()
-
 sample.run <- function(.df, .sample.size=.01, plot.graphs=F) suppressWarnings({
   # .df <- e.nw.df
   # .sample.size=.1
   # plot.graphs = F
-  
-  df.network <- asNetwork(.df)
-  lcm <- component.largest(df.network, 
-                           connected=c("recursive"),
-                           result = "membership")
-  vert_ids <- V(.df)[lcm]
-  n1 <- igraph::induced_subgraph(.df, vert_ids)
-
-  if(plot.graphs) {
-    gplot(asNetwork(n1), displaylabels = T)
-    # ig <- asIgraph(n1)
-    # d <- as_data_frame(ig, what="both")
-    # d <- intergraph::asDF(n1)
-    simpleNetwork(as_data_frame(n1), height="400px", width="400px"
-                  ,opacity = 0.6,zoom = T
-                  ,fontSize = 3
-                  ,nodeColour="blue"
-                    ,linkColour="lightgray")
-  }
-  
-  e.undir.nw <- asNetwork(as.undirected(n1, mode = "collapse"))
-  l <- list(size=network.size(e.undir.nw)
-                    ,density=gden(e.undir.nw,mode="graph")
-                    #,connected=isconn
-                    ,components=sna::components(e.undir.nw,connected="weak")
-                    # ,largest.component=max(geodist(largest.component)$gdist)
-                    ,diameter=diameter(asIgraph(e.undir.nw))
-                    ,cl.coeff=suppressWarnings(
-                      gtrans(e.undir.nw, mode="graph"))
-  )
-  
+  sample.size <- round(length(E(.df)) * .sample.size)
   kept.edges=sample(seq(1,length(E(.df)),1),
-                    round(length(E(.df)) * .sample.size),
+                    sample.size,
                     replace = F)
   
   train.network <- subgraph.edges(.df, eids=kept.edges, delete.vertices = F)
   train.network.trimmed <- subgraph.edges(.df, eids=kept.edges, delete.vertices = T)  
-  
-  paste0("kept.edges=", length(kept.edges),
-        ",vcount=", vcount(train.network),
-        ",vcount.trimmed=", vcount(train.network.trimmed),
-        ",vcount.n1=", vcount(n1))
   
   train.network.df <- as_data_frame(train.network, what="edges")
   train.network.trimmed.df <- as_data_frame(train.network.trimmed, what="edges")
@@ -160,7 +123,7 @@ sample.run <- function(.df, .sample.size=.01, plot.graphs=F) suppressWarnings({
   e.net <- asNetwork(train.network)
   e.net.trimmed <- asNetwork(train.network.trimmed)
   # print.network(summary(e.net))
-
+  
   if(plot.graphs){
     plot(train.network.trimmed, 
          vertex.col=V(train.network.trimmed)$v.type, 
@@ -171,7 +134,7 @@ sample.run <- function(.df, .sample.size=.01, plot.graphs=F) suppressWarnings({
          vertex.label.cex = 0.8,
          layout=layout.graphopt
          # layout=layout.kamada.kawai # layout.fruchterman.reingold
-         )
+    )
     gplot(e.net.trimmed, displaylabels = F, label.cex = .5)
     simpleNetwork(train.network.trimmed.df, height="400px", width="400px"
                   ,opacity = 0.6, zoom = T
@@ -185,34 +148,33 @@ sample.run <- function(.df, .sample.size=.01, plot.graphs=F) suppressWarnings({
   c1 <- cor(V(e.nw.df), net.deg)
   
   a1 <- assortativity.nominal(train.network,
-                        as.integer(as.factor(V(e.nw.df)$type)),
-                        directed = FALSE)
+                              as.integer(as.factor(V(e.nw.df)$type)),
+                              directed = FALSE)
   
   a2 <- assortativity.nominal(train.network,
-                        as.integer(as.factor(V(e.nw.df)$name)),
-                        directed = FALSE)
+                              as.integer(as.factor(V(e.nw.df)$name)),
+                              directed = FALSE)
   
   e.undir <- as.undirected(train.network, mode=c("collapse"))
   e.undir.nw <- asNetwork(e.undir)
   
-  largest.component <- component.largest(e.net,
-                                         connected=c("recursive"),
-                                         return.as.edgelist = F,
-                                         result = "graph")
-
-
+  lcm <- component.largest(e.net
+                           ,connected=c("recursive")
+                           ,result = "membership")
+  vert_ids <- V(train.network)[lcm]
+  sample.lcm.graph <- igraph::induced_subgraph(train.network, vert_ids)
+  
   sampled.l <- list(size=network.size(e.undir.nw)
                     ,density=gden(e.undir.nw,mode="graph")
                     #,connected=isconn
                     ,components=sna::components(e.undir.nw,connected="weak")
-                    ,largest.component=max(geodist(largest.component)$gdist)
+                    ,largest.component.size=vcount(sample.lcm.graph)
+                    # ,largest.component=max(geodist(largest.component)$gdist)
                     ,diameter=diameter(asIgraph(e.undir.nw))
                     ,cl.coeff=suppressWarnings(
                       gtrans(e.undir.nw, mode="graph"))
   )
 
-  # n1 <- network(largest.component, vertices=V(train.network), type="adjacency", directed=F)
-  
   suppressWarnings(ceb <- cluster_edge_betweenness(e.undir, directed=F))
   c.detect <- list(cluster_fast_greedy=cluster_fast_greedy
                    ,cluster_louvain=cluster_louvain
@@ -226,17 +188,18 @@ sample.run <- function(.df, .sample.size=.01, plot.graphs=F) suppressWarnings({
   o <- lapply(c.detect, function(f) f(e.undir))
   o <- append(o, list(cluster_edge_betweenness=ceb))
   
+  # comm.detect <- list(cluster_louvain=cluster_louvain
+  #                     ,cluster_leiden=cluster_leiden)
+  # 
+  # comms <- lapply(comm.detect, function(x) x(e.undir))
+
+  lcm <- component.largest(asNetwork(.df), 
+                           connected=c("recursive"),
+                           result = "membership")
+  vert_ids <- V(.df)[lcm]
+  lcm.graph <- igraph::induced_subgraph(.df, vert_ids)
   
-  comm.detect <- list(cluster_louvain=cluster_louvain
-                      ,cluster_leiden=cluster_leiden)
-  
-  comms <- lapply(comm.detect, function(x) x(e.undir))
-  # plot(comms[[2]], e.undir)
-  
-  # n1 <- asNetwork(sub.gr)
-  # print.network(summary(n1))
- 
-  vp.undir <- as.undirected(n1, mode=c("collapse"))
+  vp.undir <- as.undirected(lcm.graph, mode=c("collapse"))
   # vp.undir <- e.undir
   is.connected(asNetwork(vp.undir))
   
@@ -247,27 +210,180 @@ sample.run <- function(.df, .sample.size=.01, plot.graphs=F) suppressWarnings({
   })
   names(vert.prox.scores) <- vert.prox.methods
   lapply(vert.prox.scores, head)
-
-  # train.nw.inw <- intergraph::asNetwork(train.network.trimmed,
-  #                                       # directed=TRUE,
-  #                                       names.eval="weight")
-  # train.nw.inw
-  # simpleNetwork(train.network.trimmed.df, zoom=T)
-  # sampled.l
-  train.nw.inw <- intergraph::asNetwork(vp.undir,
-                                        # directed=TRUE,
-                                        names.eval="weight")
   
-  is.connected(train.nw.inw)
-  # simpleNetwork(as_data_frame(n1), zoom=T)
+  print(paste0("samp.sz=", sample.size
+               ,",df.ecnt=", ecount(e.nw.df)
+               ,",kept.edges=", length(kept.edges)
+               ,",df.vcnt=", vcount(e.nw.df)
+               ,",samp.vcnt=", vcount(train.network)
+               ,",samp.vnt.trimd=", vcount(train.network.trimmed)
+               ,",df.lcm.sz=", vcount(lcm.graph)
+               ,",samp.lcm.sz=", vcount(sample.lcm.graph)
+  ))
+  
+  return(list(tnw=train.network
+              ,tnw.trimmed=train.network.trimmed
+              ,degree=net.deg
+              ,cor=c1
+              ,assort.type=a1
+              ,assort.name=a2
+              ,sample.five.pt.summ=sampled.l
+              ,sample.lcm.graph=sample.lcm.graph
+              ,largest.comp.membership.graph=lcm.graph
+              ,vertex.prox=vert.prox.scores
+              ,centrality=o
+  ))
+  
+})
+
+
+plot.df <- make.graph.dataframe(tok.13, with.short.addr=F)$graph.df
+lapply(vertex.attributes(plot.df), head)
+s.stats <- sample.run(plot.df, .sample.size=.5, plot.graphs=T)
+
+.save.run.file="100runs.Rda"
+if(!file.exists(.save.run.file)) {
+  r <- 10
+  run.res <- list()
+  for (i in seq(1, r)) {
+    s <- sample.run(e.nw.df, .sample.size=.1)
+    run.res <- append(run.res, list(s))
+  }
+  save(run.res, file=.save.run.file)
+} else {
+  load(.save.run.file)
+}
+
+
+
+names(run.res[[1]])
+samples <- lapply(run.res, '[[', 1)
+samples.trimmed <- lapply(run.res, '[[', 2)
+degrees <- lapply(run.res, '[[', 3)
+corrs <- lapply(run.res, '[[', 4)
+assort.types <- lapply(run.res, '[[', 5)
+assort.names <- lapply(run.res, '[[', 6)
+sample.fivept.summ <- lapply(run.res, '[[', 7)
+sample.lcm.graphs <- lapply(run.res, '[[', 8)
+lcm.graphs  <- lapply(run.res, '[[', 9)
+vertex.proxs <- lapply(run.res, '[[', 10)
+centralities <- lapply(run.res, '[[', 11)
+
+.plot.EDA <- F
+if(.plot.EDA) {
+  hist(unlist(lapply(degrees, max)))
+  hist(unlist(corrs))
+  hist(unlist(assort.types))
+  hist(unlist(assort.names))
+  names(fivept.summ[[1]])
+
+  sapply(fivept.summ, '[[', 1)
+  sapply(fivept.summ, '[[', 3)
+  samp.lc <- run.res[[5]][[8]]
+  samp.lc.nw <<- network(samp.lc, matrix.type="adjacency", directed=T)
+
+  
+  
+  vp.cn <- lapply(vertex.proxs, function(vp) max(vp[[1]]))
+  vp.pa <- lapply(vertex.proxs, function(vp) max(vp[[2]]))
+  
+  hist(unlist(vp.cn))
+  hist(unlist(vp.pa))
+  
+  ceb.mod <- lapply(centralities, function(c) modularity(c$cluster_edge_betweenness))
+  cfg.mod <- lapply(centralities, function(c) modularity(c$cluster_fast_greedy))
+  
+  hist(unlist(ceb.mod))
+  hist(unlist(cfg.mod))
+  
+  l <- unlist(cfg.mod)
+  
+  outliers <- which(l > quantile(l, .95))
+  
+  par(mfcol=c(2,2))
+  for( a in outliers[1:4]) {
+    tr.nw <- run.res[[a]]$tnw
+    undir.net <- as.undirected(tr.nw, mode=c("collapse"))
+    r <- str_replace(vertex.attributes(undir.net)$name, ".*\\.\\..*", "-")
+    # undir.net <- set_vertex_attr(undir.net, 'name', value=r)
+    lapply(vertex.attributes(undir.net), function(x) print(head(x)))
+    plot(centralities[[a]]$cluster_fast_greedy, undir.net, 
+         vertex.size=1,
+         vertex.label.cex = .02)
+  }
+}
+
+
+
+doParallel <- function(.m) {
+  tryCatch({
+    registerDoParallel(clust_cores)
+    .m
+  },
+  finally = stopCluster(clust_cores))
+}
+do.modelling <- function(.m, .f) {
+  if(!file.exists(.f)) {
+    invisible(timeit(.f, 
+           doParallel(.m),
+           cores))
+  } else {
+    load(.f, envir = .GlobalEnv)
+  }
+}
+
+plot.model <- function(.m) {
+  simpleNetwork(as_data_frame(asIgraph(.m$newnetwork)), zoom=T)
+}
+
+cores=detectCores()
+clust_cores <- makeCluster(cores[1]-1) #not to overload your computer
+
+# model.graph <- function(.mgraph, plot.graphs=F) suppressWarnings({
+  # .mgraph <- lcm.graphs[[5]]
+  .mgraph <- sample.lcm.graphs[[5]]
+  table(V(.mgraph)$type)
+
+  print(paste(".mgraph.vertices=",vcount(.mgraph), ".edges=", ecount(.mgraph)))
+  plot.graphs = F
+  
+  if(plot.graphs) {
+    gplot(asNetwork(.mgraph), displaylabels = T)
+    plot.network(asNetwork(.mgraph), label.cex=.5)
+    simpleNetwork(as_data_frame(.mgraph), height="400px", width="400px"
+                  ,opacity = 0.6,zoom = T
+                  ,fontSize = 3
+                  ,nodeColour="blue"
+                    ,linkColour="lightgray")
+  }
+  
+  lcm.undir.nw <- asNetwork(as.undirected(.mgraph, mode = "collapse"))
+  train.nw.inw <- lcm.undir.nw
+  
+  lcm.fivepoint <- list(size=network.size(train.nw.inw)
+                        ,density=gden(train.nw.inw,mode="graph")
+                        ,connected=is.connected(train.nw.inw)
+                        ,components=sna::components(train.nw.inw,connected="weak")
+                        # ,largest.component=max(geodist(largest.component)$gdist)
+                        ,diameter=diameter(asIgraph(train.nw.inw))
+                        ,cl.coeff=suppressWarnings(
+                          gtrans(lcm.undir.nw, mode="graph"))
+  )
+  
+  lcm.fivepoint
+  # train.nw.inw <-intergraph::asNetwork(.mgraph,
+  #                                       #        # directed=TRUE,
+  #                                       names.eval="weight")
   
   train.nw.inw
-  igraph::list.edge.attributes(train.network.trimmed)
-  igraph::list.vertex.attributes(train.network.trimmed)
   
+  igraph::list.edge.attributes(.mgraph)
+  igraph::list.vertex.attributes(.mgraph)
   network::list.edge.attributes(train.nw.inw)
   
-  # E(tr.net.removed)[which_loop(tr.net.removed)]
+  # n/w loops
+  E(.mgraph)[which_loop(.mgraph)]
+  
   # ideg <- seq(round(max(net.deg) * .001),round(max(net.deg) * .02))
   # ideg
   ideg <- sna::degree(train.nw.inw, cmode = "indegree")
@@ -279,167 +395,246 @@ sample.run <- function(.df, .sample.size=.01, plot.graphs=F) suppressWarnings({
   odeg <- odeg[order(odeg)]
   odeg
   
-  
-
   w <- train.nw.inw %e%"weight"
 
-  network::list.edge.attributes(train.nw.inw)
-  unique(V(train.network)$type)
-
-  clust_cores <- makeCluster(cores[1]-1) #not to overload your computer
-  registerDoParallel(clust_cores)
-
-  train.nw.inw <- intergraph::asNetwork(n1,
-                                        # directed=TRUE,
-                                        names.eval="weight")
-  # .mfile = "models/lc1.Rda"
-  # lc1.3 <- ergm(train.nw.inw ~ sum + nonzero + mutual("min")
-  #              + nodefactor("type")
-  #              + nodematch("address")
-  #              # + transitiveweights("min","max","min")
-  #              # + cyclicalweights("min","max","min")
-  #              , response="weight", reference=~Poisson, verbose=TRUE
-  #              , control = control.ergm(
-  #                # MCMLE.density.guard=exp(8)
-  #                # ,MCMC.interval=10
-  #                # ,MCMC.samplesize=10
-  #                MCMLE.maxit = 3
-  #                ,CD.maxit = 20
-  #                ,MCMC.runtime.traceplot=T
-  #                ,init.method = "CD"
-  #                ,parallel=cores, parallel.type="PSOCK"
-  #                # , checkpoint="lc1.3.%02d.RData"
-  #                , resume="lc1.3.03.RData"
-  #              ))
-
-  e0.ctrl = control.ergm(
-                          # MCMLE.density.guard=exp(8)
-                         # ,MCMC.interval=100
-                         # ,MCMC.samplesize=100
-                         MCMLE.maxit = 5
-                         ,parallel=cores, parallel.type="PSOCK"
-  )
-
-  .mfile = "models/e0.1.Rda"
-  network::list.vertex.attributes(train.nw.inw)
-  network::list.edge.attributes(train.nw.inw)
-  if(!file.exists(.mfile)) {
-    lc0.1 <- ergm( train.nw.inw ~ edges
-                  + nodefactor("type")
-                  + nodematch("address")
-                  # + kstar(2)
-                  + triangle
-                  , control = e0.ctrl
-    )
-    save(lc0.1, file=.mfile)
-  } else {
-    load(.mfile)
+  unique(V(.mgraph)$type)
+  
+  summarize.model <- function(.model) {
+    summary(.model)
+    mcmc.diagnostics(.model)
+    .gof <- gof(.model)
+    plot(.gof)
   }
   
-  stopCluster(clust_cores)
+  {
+    lc.baseline <- ergm( train.nw.inw ~ edges)
+    # summary(lc.baseline)
+    # plot(gof(lc.baseline))
+  }
 
-  # summary(e0.1)
-  # 
-  # summary(e0.11)
-  # 
-  # plot(e0.1.gof)
-  # 
-  # mcmc.diagnostics(lc0.1)
-  # 
-  # lc0.1.gof <- gof(lc0.1)
-  # plot(lc0.1.gof)
-  # simpleNetwork(as_data_frame(asIgraph(lc0.1$newnetwork)), zoom=T)
+  {
+    lc.nodefactor <- ergm( train.nw.inw ~ edges
+                         + nodefactor("type"))
+    # summary(lc.nodefactor)
+    # plot(gof(lc.nodefactor))
+  }
 
-  # lc0.13 <- ergm( train.nw.inw ~ edges
-  #               + nodefactor("type")
-  #               + nodematch("address")
-  #               # + sender + receiver #+ mutual
-  #               # + triangle
-  #               # + istar(2)
-  #               # + idegree(ideg[3:5])
-  #               # + odegree(odeg[3:5])
-  #               # # + localtriangle(5)
-  #               + gwdegree(decay=1, fixed=T, cutoff=10)
-  #               # + cycle(2, semi=T)
-  #               # + cyclicalties()
-  #               # + triangles
-  #               # + mutual
-  #               + gwesp(decay=0.1, fixed=T)
-  #               , control = e0.ctrl
-  # )
+  {
+    lc.matchingaddr <- ergm( train.nw.inw ~ edges
+                           + nodefactor("type")
+                           + nodematch("address"))
+    # summary(lc.matchingaddr)
+    # plot(gof(lc.matchingaddr))
+  }
+  
+  models.so.far <- list(lc.baseline, lc.nodefactor, lc.matchingaddr)
+  length(models.so.far)
+  e0.ctrl = control.ergm(
+    MCMLE.maxit = 5
+    ,MCMC.interval = 50
+    ,MCMC.burnin = 40
+    # ,MCMC.samplesize = 100
+    # ,MCMC.effectiveSize=50
+    ,MCMC.effectiveSize.maxruns=300
+    ,MCMLE.density.guard=5000
+    ,MCMC.runtime.traceplot=T
+    ,parallel=cores, parallel.type="PSOCK"
+    #                # , checkpoint="lc1.3.%02d.RData"
+    #                , resume="lc1.3.03.RData"
+  )
+  
+  .mfile = "models/lc0.1.Rda"
+  do.modelling({
+    lc0.1 <- ergm( train.nw.inw ~ edges
+                     + nodefactor("type")
+                     + nodematch("address")
+                     # + kstar(2)
+                     + triangle
+                     , control = e0.ctrl
+      )
+    save(lc0.1, file=.mfile)
+  }, .mfile)
+  
+  models.so.far <- append(models.so.far, list(lc0.1))
+  
+  # lapply(models.so.far, summary)
+  # summarize.model(lc0.1)
+  # plot.model(lc0.1)
 
-  # summary(lc0.13)
-  # 
+  .mfile = "models/lc0.2.Rda"
+  do.modelling({
+    lc0.2 <- ergm( asNetwork(.mgraph) ~ edges
+                   + nodefactor("type")
+                   + nodematch("address")
+                   + gwesp(decay=0.01, fixed=F)
+                   + mutual
+                   + cycle(3, semi=F)
+                   + cyclicalties()
+                   , control = e0.ctrl
+    )
+    save(lc0.2, file=.mfile)
+  }, .mfile)
+  
+  models.so.far <- append(models.so.far, list(lc0.2))
+  # lapply(models.so.far, summary)
+  
+  # summarize.model(lc0.2)
+  # summary(lc0.2)
+  # odeg[order(odeg)][1:2]
+  .mfile = "models/lc0.3.Rda"
+  do.modelling({
+    lc0.3 <- ergm( asNetwork(.mgraph) ~ edges
+                   + nodefactor("type")
+                   + nodematch("address")
+                   + gwesp(decay=0.01, fixed=F)
+                   + mutual
+                   + cycle(5, semi=F)
+                   + cyclicalties()
+                   + localtriangle(train.nw.inw)
+                   # + idegree(ideg[3:5])
+                   # + odegree(odeg[3:5])
+                   # + gwidegree(decay=1, fixed=F, cutoff=3)
+                   # + gwodegree(decay=1, fixed=F, cutoff=3)
+                   , control = e0.ctrl
+    )
+    save(lc0.3, file=.mfile)
+  }, .mfile)
+
+    
+  .mfile = "models/lc0.4.Rda"
+  do.modelling({
+    lc0.4 <- ergm( asNetwork(.mgraph) ~ edges
+                   + nodefactor("type")
+                   + nodematch("address")
+                   + cycle(5, semi=F)
+                   + localtriangle(train.nw.inw)
+                   + idegree(ideg[3:5])
+                   + odegree(odeg[3:5])
+                   + gwidegree(decay=1, fixed=F, cutoff=3)
+                   + gwodegree(decay=1, fixed=F, cutoff=3)
+                   , control = e0.ctrl
+    )
+    save(lc0.4, file=.mfile)
+  }, .mfile)
+  
+
+  .mfile = "models/lc0.5.Rda"
+  do.modelling({
+    lc0.5 <- ergm( asNetwork(.mgraph) ~ edges
+                   + nodefactor("type")
+                   + nodematch("address")
+                   + cycle(7, semi=F)
+                   + localtriangle(train.nw.inw)
+                   + gwidegree(decay=1, fixed=F, cutoff=3)
+                   + gwodegree(decay=1, fixed=F, cutoff=3)
+                   , control = e0.ctrl
+    )
+    save(lc0.5, file=.mfile)
+  }, .mfile)
+  
+  models.so.far <- append(models.so.far, list(lc0.5))
+  
+  # lapply(models.so.far, summary)
+  
+  .mfile = "models/lc0.6.Rda"
+  do.modelling({
+    lc0.6 <- ergm( asNetwork(.mgraph) ~ edges
+                   + nodefactor("type")
+                   + nodematch("address")
+                   + cycle(3, semi=F)
+                   # + transitiveweights("min","max","min")
+                   + transitiveties(attr='address')
+                   # + cyclicalweights("min","max","min")
+                   + cyclicalties(attr='address')
+                   + gwidegree(decay=1, fixed=F, cutoff=3)
+                   + gwodegree(decay=1, fixed=F, cutoff=3)
+                   # , response="weight", reference=~Geometric
+                   , control = e0.ctrl
+    )
+    save(lc0.6, file=.mfile)
+  }, .mfile)
+
+  models.so.far <- append(models.so.far, list(lc0.6))
+  lapply(models.so.far, summary)
+  
+  .mfile = "models/lc0.7.Rda"
+  do.modelling({
+    lc0.7 <- ergm( asNetwork(.mgraph) ~ cycle(3, semi=F)
+                   + transitiveties(attr='address')
+                   + cyclicalties(attr='address')
+                   + gwidegree(decay=1, fixed=F, cutoff=3)
+                   + gwodegree(decay=1, fixed=F, cutoff=3)
+                   + esp(3)
+                   + ddsp(3)
+                   , control = e0.ctrl
+    )
+    save(lc0.7, file=.mfile)
+  }, .mfile)
+  
+  models.so.far <- append(models.so.far, list(lc0.7))
+  
+  lapply(models.so.far, summary)
+  # .mfile = "models/lc1.1.Rda"
+  # do.modelling({
+  #   lc1.1 <- ergm(asNetwork(.mgraph) ~ sum + nonzero + mutual("min")
+  #              + nodefactor("type")
+  #              + nodematch("address")
+  #              + transitiveweights("min","max","min")
+  #              + cyclicalweights("min","max","min")
+  #           + atleast(threshold=5)
+  #              , response="weight", reference=~Poisson, verbose=TRUE
+  #              , control = er.count.ctrl)
+  #   save(lc1.1, file=.mfile)
+  # }, .mfile)
+
+  .mfile = "models/lc1.1.Rda"
+  do.modelling({
+    lc1.1.ergm.ctrl = control.ergm(
+      MCMLE.maxit = 3
+      ,CD.maxit = 10
+      ,MCMC.interval = 50
+      ,MCMC.burnin = 40
+      # ,MCMC.samplesize = 80
+      # ,MCMC.effectiveSize=20
+      ,MCMC.effectiveSize.maxruns=200
+      ,MCMLE.density.guard=5000
+      ,MCMC.runtime.traceplot=T
+      ,init.method = "CD"
+      ,parallel=cores, parallel.type="PSOCK"
+      # ,verbose=TRUE
+      ,checkpoint="lc1.1.%02d.RData"
+      # , resume="lc1.3.03.RData"
+    )
+    print(paste("vcount=",vcount(.mgraph),", ecount=", ecount(.mgraph)))
+    lc1.1 <- ergm(asNetwork(.mgraph) ~ geomean + nonzero + mutual("geomean")
+               # + nodefactor("type")
+               # + nodematch("address")
+               + transitiveweights("geomean","max","geomean")
+               + cyclicalweights("geomean","max","geomean")
+               , response="weight", reference=~Poisson, verbose=TRUE
+               , control = lc1.1.ergm.ctrl
+               , san = control.san(SAN.maxit=50))
+    save(lc1.1, file=.mfile)
+  }, .mfile)
+
   # lc0.13.gof=gof(lc0.13)
   # par(mfrow=c(3,2))
   # plot(lc0.13.gof)
   
-  return(list(tnw=train.network
-              ,degree=net.deg
-              ,cor=c1
-              ,assort.type=a1
-              ,assort.name=a2
-              ,summ=l
-              ,sampled.summ=sampled.l
-              ,largest.comp=largest.component
-              ,vertex.prox=vert.prox.scores
-              ,centrality=o
-  )) 
-})
-
-
-plot.df <- make.graph.dataframe(tok.13, with.short.addr=F)$graph.df
-lapply(vertex.attributes(plot.df), head)
-sample.run(plot.df, .sample.size=.01, plot.graphs=F)
-
-
-r <- 100
-run.res <- list()
-for (i in seq(1, r)) {
-  s <- sample.run(e.nw.df, .sample.size=.1)
-  run.res <- append(run.res, list(s))
-}
-
-
-
-names(run.res[[1]])
-degrees <- lapply(run.res, '[[', 2)
-corrs <- lapply(run.res, '[[', 3)
-assort.types <- lapply(run.res, '[[', 4)
-assort.names <- lapply(run.res, '[[', 5)
-vertex.proxs <- lapply(run.res, '[[', 8)
-centralities <- lapply(run.res, '[[', 9)
-
-hist(unlist(lapply(degrees, max)))
-hist(unlist(corrs))
-hist(unlist(assort.types))
-hist(unlist(assort.names))
-
-
-
-vp.cn <- lapply(vertex.proxs, function(vp) max(vp[[1]]))
-vp.pa <- lapply(vertex.proxs, function(vp) max(vp[[2]]))
-
-hist(unlist(vp.cn))
-hist(unlist(vp.pa))
-
-ceb.mod <- lapply(centralities, function(c) modularity(c$cluster_edge_betweenness))
-cfg.mod <- lapply(centralities, function(c) modularity(c$cluster_fast_greedy))
-hist(unlist(ceb.mod))
-hist(unlist(cfg.mod))
-
-l <- unlist(cfg.mod)
-
-outliers <- which(l > quantile(l, .95))
-
-par(mfcol=c(2,2))
-for( a in outliers[1:4]) {
-  tr.nw <- run.res[[a]]$tnw
-  undir.net <- as.undirected(tr.nw, mode=c("collapse"))
-  r <- str_replace(vertex.attributes(undir.net)$name, ".*\\.\\..*", "-")
-  # undir.net <- set_vertex_attr(undir.net, 'name', value=r)
-  lapply(vertex.attributes(undir.net), head)
-  plot(centralities[[a]]$cluster_fast_greedy, undir.net, 
-       vertex.size=1,
-       vertex.label.cex = .02)
-}
+  list(baseline=lc.baseline
+       ,lc.nodefactor=lc.nodefactor
+       ,lc.matchingaddr=lc.matchingaddr
+       ,lc0.1=lc0.1
+       ,lc0.2=lc0.2
+       ,lc0.3=lc0.3
+       ,lc0.4=lc0.4
+       ,lc0.5=lc0.5
+       ,lc0.6=lc0.6
+       # ,lc1.1=lc1.1
+       # ,lc1.2=lc1.2
+  )
+  
+# })
+  
+  
+# ergm.models <- model.graph(lcm.graphs[[5]])
