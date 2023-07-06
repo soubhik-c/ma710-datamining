@@ -5,6 +5,7 @@ librarian::shelf(caret, pdp, ggplot2, gridExtra, patchwork,
                  caretEnsemble, data.table, stringr,
                  bootnet, psych, qgraph, network, igraph, intergraph, tsna, statnet,
                  networkDynamic, networkD3,
+                 multinet, latticeExtra, coda,
                  ergm, ergm.count, Rglpk, xUCINET, linkprediction)
 
 #function defs #####
@@ -229,12 +230,14 @@ plot.simple.network <- function(.igraph.obj) {
 # gplot(statnet.df.lcm.graph, displaylabels = T, label.cex = .5)
 # plot.simple.network(df.lcm.graph)
 
-get.vertex.proximity <- function(.undirected.gr) {
-  is.connected(asNetwork(.undirected.gr))
+get.vertex.proximity <- function(.undirected.gr, .type="edgelist") {
+  # is.connected(asNetwork(.undirected.gr))
   vert.prox.methods <- c("cn", "pa", "jaccard")
   vert.prox.scores <- lapply(vert.prox.methods, function(m) {
-    scores <- proxfun(.undirected.gr, method=m, value="edgelist")
-    scores[order(-scores$value),]
+    scores <- proxfun(.undirected.gr, method=m, value=.type)
+    if(.type == "edgelist")
+      scores[order(-scores$value),]
+    scores
   })
   names(vert.prox.scores) <- vert.prox.methods
   vert.prox.scores
@@ -243,10 +246,12 @@ get.vertex.proximity <- function(.undirected.gr) {
 
 vertexp.file="df.vertexprox.Rda"
 if (!file.exists(vertexp.file)) {
-  timeit("df.get-vertexprox-scores",
-         df.vertex.prox.scores <- get.vertex.proximity(as.undirected(df.lcm.graph, mode=c("collapse")))
-  )
-  save(df.vertex.prox.scores, file=vertexp.file)
+  timeit("df.get-vertexprox-scores",{
+    .undir <- as.undirected(df.lcm.graph, mode=c("collapse"))
+     df.vertex.prox.scores.edgelist <- get.vertex.proximity(.undir)
+     df.vertex.prox.scores.gr <- get.vertex.proximity(.undir, "graph")
+  })
+  save(df.vertex.prox.scores.edgelist, df.vertex.prox.scores.gr, file=vertexp.file)
 } else {
   load(vertexp.file, envir = .GlobalEnv)
 }
@@ -474,6 +479,8 @@ do.EDA <- function() {
 
 ##### 
 }
+
+
 ##--- Final Model (df.LCM) EDA ####
 do.LCM.EDA <- function() {
   ## Fit power law
@@ -570,6 +577,31 @@ do.LCM.EDA <- function() {
         ,top="Rand Index comparing various centralities")
     },"./images/lcm.eda-4-3.png", .res=300, .w=350, .h=90)
   }
+  
+  #vertex proximities (tendencies to make friends) ####
+  vps <- df.vertex.prox.scores.edgelist[1:2]
+
+  top5.proximates <- lapply(vps, function(.e) {
+    c<-.e$value
+    edges <- .e[which(.e$value %in% head(c[order(-c)])),]
+    edges <- edges[!duplicated(edges[,3]),]
+    head(edges[order(-edges$value),], 5)
+  })
+
+  top5.proximates
+
+  .df.verts <- V(df.lcm.graph)
+  l<-lapply(top5.proximates, function(.r) {
+    data.frame(from=.df.verts[.r$from]$name,
+         to=.df.verts[.r$to]$name,
+         value=.r$value
+    )
+  })
+  
+  vps <- lapply(l, tableGrob)
+
+  savepng(ggarrange(vps[[1]], vps[[2]], labels=c('Common\nNeighbors', 'Preferrential\nAttachments')),
+          "./images/vertex.proxim.png", .res=300, .w=160, .h=90)
 }
 
 
@@ -695,10 +727,6 @@ base.model.eda <- function(.mgraph, plot.graphs=F) suppressWarnings({
   # your_subgraph <- subgraph.edges(your_graph, list_of_edges)
 })
 
-{
-  ggraph
-}
-
 # model.graph <- function(.mgraph, plot.graphs=F) suppressWarnings({
   ## prepare ####
   # head(clean.5m.df$dataframe)
@@ -750,26 +778,47 @@ base.model.eda <- function(.mgraph, plot.graphs=F) suppressWarnings({
   #                          + nodematch("name2"))
   # }
   # 
-  # models.so.far <- list(base=lc.baseline,
+  # baseline50k <- list(base=lc.baseline,
   #                       type=lc.nodefactor,
   #                       address=lc.matchingaddr,
   #                       name2=lc.matchingname2
   #                       )
-  # save(models.so.far, file="./models/baseline50k.Rda")
+  # baseline50k.gof <- lapply(baseline50k, get.gof)
+  # save(baseline50k, baseline50k.gof, file="./models/baseline50k.Rda")
+  
+  .save.gofs = F
+  save.gof <- function(.mgof, .n) {
+    if(!.save.gofs) return()
+    savepng({
+      par(mfrow=c(2,2))
+      plot(.mgof)
+    }, paste0("./images/gof-",.n, ".png"), .res=300, .w=300, .h=200)
+  }
+  
   
   load("./models/baseline50k.Rda")
+  models.so.far <- baseline50k
+  mapply(function(.mgof, .i) {
+    save.gof(.mgof, paste0("bl.", .i, names(baseline50k.gof)[.i]))
+  }, baseline50k.gof, seq_along(baseline50k.gof))
+
   
   get.gof <- function(.m) {
     gof(.m, GOF=~model + distance+espartners+triadcensus)
   }
   
-  print.models.so.far <- function() {
+  print.models.so.far <- function(print.prob=T) {
     sink("./images/models.sofar.txt")
-    lapply(models.so.far, function(.m) {
+    lapply(seq_along(models.so.far), function(.i) {
+      .m<-models.so.far[[.i]]
+      cat(paste("Model:",.i, "--", names(models.so.far)[.i], "\n"))
       print(summary(.m))
-      cat(paste(rep('-', 60), collapse = ''))
-      cat('\nprobability\n')
-      print(plogis(coef(.m)))
+      if(print.prob) {
+        cat(paste(rep('-', 60), collapse = ''))
+        cat('\nprobability\n')
+        print(plogis(coef(.m)))
+      }
+      cat(paste0(paste(rep('*', 60), collapse = ''), "\n"))
       cat(paste(rep('\n', 2), collapse = ''))
     })
     sink()
@@ -777,8 +826,29 @@ base.model.eda <- function(.mgraph, plot.graphs=F) suppressWarnings({
     return("")
   }
   
-  print.models.so.far()
-
+  print.mcmc.diag.mods.so.far <- function() {
+    sink("./images/mcmc.diag.models.sofar.txt")
+    lapply(seq_along(models.so.far), function(.i) {
+      .m<-models.so.far[[.i]]
+      cat(paste("Model:",.i, "--", names(models.so.far)[.i], "\n"))      
+      # print(summary(.m))
+      # cat(paste(rep('-', 60), collapse = ''))
+      # cat('\nprobability\n')
+      # print(plogis(coef(.m)))
+      # cat(paste(rep('-', 60), collapse = ''))
+      # cat(paste("\nDiagnostics", "\n"))
+      mcmc.diagnostics(.m, which=c("summary"))
+      cat(paste0(paste(rep('*', 60), collapse = ''), "\n"))
+      cat(paste(rep('\n', 2), collapse = ''))
+    })
+    sink()
+    file.show("./images/mcmc.diag.models.sofar.txt")
+    return("")
+  }
+  
+  
+  # print.models.so.far(F)
+  
   table(V(.mgraph)$name2)
   
   ## good improvements ####  
@@ -792,8 +862,8 @@ base.model.eda <- function(.mgraph, plot.graphs=F) suppressWarnings({
     ,MCMLE.density.guard=5000
     ,MCMC.runtime.traceplot=T
     ,parallel=cores, parallel.type="PSOCK"
-    #                # , checkpoint="lc1.3.%02d.RData"
-    #                , resume="lc1.3.03.RData"
+    , checkpoint="lc0.8.%02d.RData"
+     # , resume="lc0.8.02.RData"
   )
   
   if(FALSE) {
@@ -829,9 +899,10 @@ base.model.eda <- function(.mgraph, plot.graphs=F) suppressWarnings({
     lc0.2.gof <- get.gof(lc0.2)
     save(lc0.2,lc0.2.gof, file=.mfile)
   }, .mfile)
-  lc0.2.gof
-  models.so.far <- append(models.so.far, list(cyclic.isig.name2=lc0.2))
   
+  models.so.far <- append(models.so.far, list(cyclic.isig.name2=lc0.2))
+  save.gof(lc0.2.gof, "lc0.2.cyclic.isig.name2")
+
   .mfile = "models/lc0.3.Rda"
   do.modelling({
     lc0.3 <- ergm( asNetwork(.mgraph) ~ edges
@@ -845,81 +916,89 @@ base.model.eda <- function(.mgraph, plot.graphs=F) suppressWarnings({
   }, .mfile)
   
   models.so.far <- append(models.so.far, list(mutual.isig.name2=lc0.3))
-
-  .mfile = "models/lc0.4.Rda"
+  save.gof(lc0.3.gof, "lc0.3.mutual.isig.name2")
+  
+  .mfile = "models/lc0.4.gwesp75.Rda"
   do.modelling({
     lc0.4 <- ergm( asNetwork(.mgraph) ~ edges
                    + nodefactor("type")
                    + nodematch("name2")
-                   + gwesp(decay=0.01, fixed=F)
+                   + gwesp(decay=0.75, fixed=T)
                    , control = e0.ctrl
     )
     lc0.4.gof <- get.gof(lc0.4)
     save(lc0.4, lc0.4.gof, file=.mfile)
   }, .mfile)
   
-  models.so.far <- append(models.so.far, list(gwesp.tri=lc0.4))
 
-  .mfile = "models/lc0.5.Rda"
+  models.so.far <- append(models.so.far, list(gwesp.75=lc0.4))
+  save.gof(lc0.4.gof, "lc0.4.gwesp.75")
+  
+  ##-- MOST DECENT MODEL SO FAR
+  .mfile = "models/lc0.5.dgwdsp75.Rda"
   do.modelling({
     lc0.5 <- ergm( asNetwork(.mgraph) ~ edges
                    + nodefactor("type")
                    + nodematch("name2")
-                   + gwdsp(decay=0.01, fixed=F)
+                   + dgwdsp(decay=0.75, fixed=T, type="RTP")
                    , control = e0.ctrl
     )
     lc0.5.gof <- get.gof(lc0.5)
     save(lc0.5, lc0.5.gof, file=.mfile)
   }, .mfile)
   
-  models.so.far <- append(models.so.far, list(gwdsp=lc0.5))
-
+  models.so.far <- append(models.so.far, list(dgwdsp=lc0.5))
+  save.gof(lc0.5.gof, "lc0.5.dgwdsp")
   
-  .mfile = "models/lc0.6.Rda"
-  do.modelling({
-    lc0.6 <- ergm( asNetwork(.mgraph) ~ edges
-                   + nodefactor("type")
-                   + nodematch("name2")
-                   + gwesp(decay=0.01, fixed=F)
-                   + gwdsp(decay=0.01, fixed=F)
-                   , control = e0.ctrl
-    )
-    lc0.6.gof <- get.gof(lc0.6)
-    save(lc0.6, lc0.6.gof, file=.mfile)
-  }, .mfile)
+  # .mfile = "models/lc0.6.Rda"
+  # do.modelling({
+  #   lc0.6 <- ergm( asNetwork(.mgraph) ~ edges
+  #                  + nodefactor("type")
+  #                  + nodematch("name2")
+  #                  + gwesp(decay=0.01, fixed=F)
+  #                  + gwdsp(decay=0.01, fixed=F)
+  #                  , control = e0.ctrl
+  #   )
+  #   lc0.6.gof <- get.gof(lc0.6)
+  #   save(lc0.6, lc0.6.gof, file=.mfile)
+  # }, .mfile)
+  # 
+  # models.so.far <- append(models.so.far, list(gwdsp.gwesp=lc0.6))
+  # save.gof(lc0.6.gof, "lc0.6.gwdsp.gwesp")
+  # 
+  # .mfile = "models/lc0.7.Rda"
+  # do.modelling({
+  #   lc0.7 <- ergm( asNetwork(.mgraph) ~ edges
+  #                  + dgwesp()
+  #                  + dgwdsp()
+  #                  , control = e0.ctrl
+  #   )
+  #   lc0.7.gof <- get.gof(lc0.7)
+  #   save(lc0.7, lc0.7.gof, file=.mfile)
+  # }, .mfile)
+  # 
+  # models.so.far <- append(models.so.far, list(dgwesp.dgwdsp=lc0.7))
+  # save.gof(lc0.7.gof, "lc0.7.dgwesp.dgwdsp")
+  # 
   
-  models.so.far <- append(models.so.far, list(gwdsp.gwesp=lc0.6))
-
-  .mfile = "models/lc0.7.Rda"
-  do.modelling({
-    lc0.7 <- ergm( asNetwork(.mgraph) ~ edges
-                   + dgwesp()
-                   + dgwdsp()
-                   , control = e0.ctrl
-    )
-    lc0.7.gof <- get.gof(lc0.7)
-    save(lc0.7, lc0.7.gof, file=.mfile)
-  }, .mfile)
-  
-  models.so.far <- append(models.so.far, list(dgwesp.dgwdsp=lc0.7))
-
-  .mfile = "models/lc0.8.Rda"
+  ##-- Hopefully FINAL
+  .mfile = "models/lc0.8.gwdsp.gwesp.Rda"
   do.modelling({
     lc0.8 <- ergm( asNetwork(.mgraph) ~ edges
                    + nodefactor("name2")
-                   + gwesp(decay=0.01, fixed=F)
-                   + gwdsp(decay=0.01, fixed=F)
+                   + gwesp(decay=0.75, fixed=T)
+                   + gwdsp(decay=0.75, fixed=T)
                    , control = e0.ctrl
     )
     lc0.8.gof <- get.gof(lc0.8)
     save(lc0.8, lc0.8.gof, file=.mfile)
   }, .mfile)
   
-  summary(lc0.8)
-  plot(lc0.8.gof)
+  models.so.far <- append(models.so.far, list(name2factor.gwdsp=lc0.8))
+  save.gof(lc0.8.gof, "lc0.8.name2factor")
   
-  models.so.far <- append(models.so.far, list(name2factor=lc0.8))
-    
+  print.models.so.far()
+  
   # g <- gof(lc0.2, GOF=~distance+espartners+triadcensus)
   # par(mfrow=c(2,2))
   # plot(g)
@@ -948,6 +1027,7 @@ base.model.eda <- function(.mgraph, plot.graphs=F) suppressWarnings({
   }, .mfile)
   
   models.so.far <- append(models.so.far, list(simmelianties=lc0.10))
+  save.gof(lc0.10.gof, "lc0.10.simmelianties")
   
   .mfile = "models/lc0.6.2.Rda"
   do.modelling({
@@ -965,7 +1045,8 @@ base.model.eda <- function(.mgraph, plot.graphs=F) suppressWarnings({
   }, .mfile)
 
   models.so.far <- append(models.so.far, list(transitiveties=lc0.6.2))
-
+  save.gof(lc0.6.2.gof, "lc0.6.2.transitiveties")
+  
   .mfile = "models/lc0.6.3.Rda"
   do.modelling({
     lc0.6.3 <- ergm( asNetwork(.mgraph) ~ edges
@@ -983,7 +1064,8 @@ base.model.eda <- function(.mgraph, plot.graphs=F) suppressWarnings({
   }, .mfile)
   
   models.so.far <- append(models.so.far, list(threepath=lc0.6.3))
-
+  save.gof(lc0.6.3.gof, "lc0.6.3.threepath")
+  
 
   ## valued-ergm ####  
   # .mfile = "models/lc1.1.Rda"
@@ -1050,3 +1132,110 @@ base.model.eda <- function(.mgraph, plot.graphs=F) suppressWarnings({
   
   
 # ergm.models <- model.graph(lcm.graphs[[5]])
+
+
+# multilayer ####
+  
+  .mgraph <- df.lcm.graph
+  t2 <- table(E(.mgraph)$token_address)
+  t2 <- head(data.frame(t2[order(-t2)]), 9)
+  
+  t2$label <- LETTERS[1:9]
+  colnames(t2)[c(1,2)] <- c('token_address', 'freq')
+  t2$short.token_addr <- paste0(str_sub(t2$token_address, 1, 10), "..", str_sub(t2$token_address, -10, -1))
+  
+  savepng(grid.arrange(tableGrob(t2), top="token_address short labels"),
+          "./images/mnet-fig1.png", .res=300, .w=220, .h=120)
+  
+  
+  e.subnws <- lapply(t2[,1], function(.token) {
+    subgraph.edges(.mgraph, E(.mgraph)[E(.mgraph)$token_address == .token], delete.vertices = T)
+  })
+  
+  names(e.subnws) <- t2$label
+  
+  assor.type <- lapply(e.subnws, function(.gr) {
+    assortativity.nominal(.gr, as.integer(as.factor(V(.gr)$type)))
+  })
+
+  assor.name2 <- lapply(e.subnws, function(.gr) {
+    assortativity.nominal(.gr, as.integer(as.factor(V(.gr)$name2)))
+  })
+
+  c <- do.call(rbind.data.frame,
+          list(type=assor.type, name2=assor.name2))
+  
+  t(c)
+  savepng(grid.arrange(tableGrob(round(t(c), 8)),  top="Assortativity Measures of different token networks"),
+  "./images/mnet-fig2.png", .res=300, .w=220, .h=90)
+  
+  
+  m.net=ml_empty()
+  mapply(function(.gr, .n) {
+    add_igraph_layer_ml(m.net, .gr, .n)
+  }, e.subnws, names(e.subnws), SIMPLIFY = F)
+  
+  s <- summary(m.net)
+  savepng(grid.arrange(tableGrob(round(s, 8)),  top="Summary of the multi network"),
+          "./images/mnet-fig3.png", .res=300, .w=250, .h=100)
+  
+  l <- layout_multiforce_ml(m.net, w_inter = 0, gravity = 1)
+  
+  savepng(plot(m.net, layout = l, grid = c(3, 3),
+       vertex.labels.cex = .4,
+       legend.x = "bottomright", legend.inset = c(.05, .05)),
+       "./images/mnet-fig4.png", .res=400, .w=300, .h=300)
+
+  j.d <- layer_comparison_ml(m.net, method = "jeffrey.degree")
+  savepng(grid.arrange(tableGrob(round(j.d, 8)),  top="Jeffrey Degree"),
+          "./images/mnet-fig5.png", .res=300, .w=250, .h=90)
+  
+  
+  p.corr.d <- layer_comparison_ml(m.net, method = "pearson.degree")
+  savepng(grid.arrange(tableGrob(round(p.corr.d, 8)),  top="Pearson Degree"),
+          "./images/mnet-fig6.png", .res=300, .w=250, .h=90)
+  
+  
+  savepng({
+    par(mfrow=c(3,3))
+    lapply(seq_along(e.subnws), function(i)
+      hist(degree(asNetwork(e.subnws[[i]])), xlab=short.addr[i], main=t2[i,3]))
+  },"./images/mnet-fig7.png", .res=300, .w=200, .h=200)
+  
+  u <- unique(unlist(lapply(e.subnws, function(x) unique(V(x)$name))))
+  e.actors <- u[!u %like% "\\.\\."]
+  
+  # deg.exchanges <- lapply(e.actors, function(ac) list(
+  #     degree_ml=degree_ml(m.net, actors=ac, layers=t2$label),
+  #     neighborhood_ml=neighborhood_ml(m.net, actors=ac, layers=t2$label),
+  #     relevance_ml=relevance_ml(m.net, actors=ac, layers=t2$label)
+  # ))
+  # names(deg.exchanges) <- e.actors
+  # data.frame(t(mapply(unlist, deg.exchanges)))
+
+  exchange.stats <- data.frame(
+             degree_ml=degree_ml(m.net, actors=e.actors, layers=t2$label)
+            ,neighborhood_ml=neighborhood_ml(m.net, actors=e.actors, layers=t2$label)
+            ,xneighborhood_ml=xneighborhood_ml(m.net, actors=e.actors, layers=c("D", "F"))
+            ,xrelevance_ml=xrelevance_ml(m.net, actors=e.actors, layers=c("D", "F"))
+  )
+  
+  rownames(exchange.stats) <- e.actors
+  exchange.stats
+  
+  d <- exchange.stats %>% arrange(desc(xrelevance_ml))
+
+  savepng(grid.arrange(tableGrob(round(d, 8)),  top="Sorted by XRelevance"),
+          "./images/mnet-fig7.png", .res=300, .w=200, .h=200)
+  
+  
+  # g <- subgraph.edges(.mgraph, E(.mgraph)[E(.mgraph)$token_address == x], delete.vertices = T)
+  # egos<-make_ego_graph(.mgraph, 1, V(.mgraph) %in% V(g))
+  # plot(egos[[which.max(unlist(lapply(egos, ecount)))]])
+  
+
+  
+# egocentric network ####
+  nl <- Networks(e.subnws)
+  ergm(e.subnws ~ N(~edges))
+  
