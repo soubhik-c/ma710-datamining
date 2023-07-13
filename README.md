@@ -6,3 +6,6 @@
 
 ## Individual Report on Future Work
 [submissions/MA 710 Personal Review.pdf]
+
+## Project Presentatino
+[submissions/MA 710-presentation.pdf]
