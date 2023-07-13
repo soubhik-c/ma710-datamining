@@ -11,3 +11,6 @@
 [submissions/MA 710-presentation.pdf](https://github.com/soubhik-c/ma710-datamining/blob/main/submissions/MA%20710-presentation.pdf)
 
 
+[presentation video](https://youtu.be/kbPEuDxLZmo)
+
+
